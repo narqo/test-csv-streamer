@@ -5,45 +5,47 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"time"
 )
 
 type csvStreamer struct {
-	w   io.Writer
 	enc *csv.Reader
+	w   io.Writer
 }
 
 func newCSVStreamer() *csvStreamer {
-	rw, wr := io.Pipe()
+	pr, pw := io.Pipe()
 	return &csvStreamer{
-		enc: csv.NewReader(rw),
-		w:   wr,
+		enc: csv.NewReader(pr),
+		w:   pw,
 	}
-}
-
-func (csv *csvStreamer) Write(p []byte) (int, error) {
-	return csv.w.Write(p)
 }
 
 type syncResp struct {
-	rows []string
+	rows [][]string
 	err  error
 }
 
-func (csv *csvStreamer) Sync(buf *bytes.Buffer) (rows []string, err error) {
-	resp := make(chan syncResp, 1)
+type writerTo interface {
+	WriteTo(w io.Writer) (n int64, err error)
+}
 
+func (csv *csvStreamer) Sync(conn writerTo) (rows [][]string, err error) {
 	go func() {
-		rows, err := csv.enc.Read()
-		resp <- syncResp{rows, err}
+		conn.WriteTo(csv.w)
 	}()
 
-	_, err = io.Copy(csv, buf)
-	if err != nil {
-		return nil, err
+	for {
+		row, err := csv.enc.Read()
+		if err != nil {
+			return nil, err
+		} else if row == nil {
+			break
+		}
+		rows = append(rows, row)
 	}
 
-	r := <-resp
-	return r.rows, r.err
+	return rows, nil
 }
 
 func main() {
@@ -56,8 +58,7 @@ func main() {
 
 	stream := newCSVStreamer()
 
-	for i := 0; i < 3; i++ {
-		rows, err := stream.Sync(buf)
-		fmt.Printf("rows %v, err %v\n", rows, err)
-	}
+	rows, err := stream.Sync(buf)
+	fmt.Printf("(main) rows %v, err %v\n", rows, err)
+	time.Sleep(time.Second)
 }
