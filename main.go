@@ -5,47 +5,41 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
-	"time"
+	"os"
 )
 
-type csvStreamer struct {
-	enc *csv.Reader
-	w   io.Writer
+type csvstream struct {
+	buf *bytes.Buffer
+	csv *csv.Reader
 }
 
-func newCSVStreamer() *csvStreamer {
-	pr, pw := io.Pipe()
-	return &csvStreamer{
-		enc: csv.NewReader(pr),
-		w:   pw,
+func NewStream(out io.Writer) *csvstream {
+	buf := bytes.NewBuffer(nil)
+	return &csvstream{
+		buf: buf,
+		csv: csv.NewReader(buf),
 	}
 }
 
-type syncResp struct {
-	rows [][]string
-	err  error
-}
-
-type writerTo interface {
-	WriteTo(w io.Writer) (n int64, err error)
-}
-
-func (csv *csvStreamer) Sync(conn writerTo) (rows [][]string, err error) {
-	go func() {
-		conn.WriteTo(csv.w)
-	}()
+func (s *csvstream) Write(p []byte) (n int, err error) {
+	n, err = s.buf.Write(p)
+	if err != nil {
+		return 0, err
+	}
 
 	for {
-		row, err := csv.enc.Read()
+		rec, err := s.csv.Read()
 		if err != nil {
-			return nil, err
-		} else if row == nil {
 			break
 		}
-		rows = append(rows, row)
+		// map records and pass them to out writer
+		fmt.Printf("record: %v\n", rec)
+	}
+	if err == io.EOF {
+		err = nil
 	}
 
-	return rows, nil
+	return n, err
 }
 
 func main() {
@@ -56,9 +50,7 @@ func main() {
 
 	buf := bytes.NewBufferString(rawTestData)
 
-	stream := newCSVStreamer()
-
-	rows, err := stream.Sync(buf)
-	fmt.Printf("(main) rows %v, err %v\n", rows, err)
-	time.Sleep(time.Second)
+	s := NewStream(os.Stderr)
+	_, err := buf.WriteTo(s)
+	fmt.Println(err)
 }
